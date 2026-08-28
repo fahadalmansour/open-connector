@@ -1,5 +1,6 @@
 import type { ResolvedCredential } from "../core/types.ts";
 import type { OAuthClientConfigService } from "./oauth-client-config-service.ts";
+import type { OAuthTokenAdapterLoader } from "./oauth-token-adapter.ts";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { OAuthCredentialRefreshService } from "./oauth-credential-refresh-service.ts";
@@ -54,6 +55,42 @@ describe("OAuthCredentialRefreshService", () => {
     );
 
     expect(refreshed.expiresAt).toBe(new Date(now + 3600_000).toISOString());
+  });
+
+  it("refreshes through a provider OAuth adapter and preserves connection identity", async () => {
+    const adapterLoader: OAuthTokenAdapterLoader = {
+      async loadOAuthTokenAdapter() {
+        return {
+          async refreshAccessToken() {
+            return {
+              accessToken: "provider-refreshed-token",
+              refreshToken: "provider-refreshed-token",
+              tokenType: "Bearer",
+              expiresAt: "2026-12-29T00:00:00.000Z",
+              metadata: { refreshedBy: "provider-adapter" },
+            };
+          },
+        };
+      },
+    };
+    const credential = expiredCredential({ permissions: "read,write" });
+
+    const refreshed = await new OAuthCredentialRefreshService(clientConfigs, adapterLoader).refresh(
+      "example",
+      credential,
+    );
+
+    expect(refreshed).toMatchObject({
+      authType: "oauth2",
+      accessToken: "provider-refreshed-token",
+      refreshToken: "provider-refreshed-token",
+      expiresAt: "2026-12-29T00:00:00.000Z",
+      profile: credential.profile,
+      metadata: {
+        permissions: "read,write",
+        refreshedBy: "provider-adapter",
+      },
+    });
   });
 
   it("uses a connection-scoped OAuth client config before the global config", async () => {

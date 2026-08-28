@@ -1,10 +1,12 @@
 import type { ActionExecutor, CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../core/types.ts";
+import type { OAuthTokenAdapter } from "../oauth/oauth-token-adapter.ts";
 
 import { withProviderFallbackMessage } from "./provider-runtime.ts";
 
 export interface ExecutorModule {
   credentialValidators?: CredentialValidators;
   executors: ProviderExecutors;
+  oauthTokenAdapter?: OAuthTokenAdapter;
   proxy?: ProviderProxyExecutor;
 }
 
@@ -38,6 +40,9 @@ export interface IProviderLoader {
    * Load a provider credential validator only when a connection is created.
    */
   loadCredentialValidators(service: string): Promise<CredentialValidators | undefined>;
+
+  /** Load provider-local OAuth token protocol hooks only when an OAuth token operation runs. */
+  loadOAuthTokenAdapter?(service: string): Promise<OAuthTokenAdapter | undefined>;
 }
 
 /**
@@ -83,6 +88,16 @@ export class ProviderLoader implements IProviderLoader {
 
     const module = await loadExecutors();
     return module.credentialValidators;
+  }
+
+  async loadOAuthTokenAdapter(service: string): Promise<OAuthTokenAdapter | undefined> {
+    const loadExecutors = this.executorModules[service];
+    if (!loadExecutors) {
+      return undefined;
+    }
+
+    const module = await loadExecutors();
+    return module.oauthTokenAdapter;
   }
 
   private _findActionExecutor(
