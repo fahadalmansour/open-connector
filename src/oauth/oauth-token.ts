@@ -1,4 +1,5 @@
-import type { OAuth2AuthDefinition, ResolvedCredential } from "../core/types.ts";
+import type { OAuth2AuthDefinition } from "../core/types.ts";
+import type { OAuthClientConfig } from "./oauth-client-config-service.ts";
 
 import { optionalRecord, optionalString, requiredString } from "../core/cast.ts";
 import { readBoundedResponseBytes } from "../core/request.ts";
@@ -10,6 +11,72 @@ const oauthTokenResponseMaxBytes = 1024 * 1024;
 const maxExpiresInSeconds = 100 * 365 * 24 * 60 * 60;
 
 class OAuthTokenResponseSizeError extends Error {}
+
+/** Normalized provider token data returned to the shared OAuth lifecycle. */
+export interface OAuthTokenResult {
+  accessToken: string;
+  refreshToken?: string;
+  tokenType: string;
+  expiresAt?: string;
+  metadata: Record<string, unknown>;
+}
+
+export interface OAuthCodeExchangeInput {
+  code: string;
+  clientConfig: OAuthClientConfig;
+  redirectUri: string;
+  tokenUrl: string;
+  fetcher: typeof fetch;
+  signal?: AbortSignal;
+  createError(message: string): Error;
+}
+
+export interface OAuthAccessTokenRefreshInput {
+  refreshToken: string;
+  clientConfig: OAuthClientConfig;
+  fetcher: typeof fetch;
+  signal?: AbortSignal;
+  createError(message: string): Error;
+}
+
+/** Provider-local overrides for token protocols that do not follow the standard OAuth request shape. */
+export interface ProviderOAuthRuntime {
+  exchangeCode?(input: OAuthCodeExchangeInput): Promise<OAuthTokenResult>;
+  refreshAccessToken?(input: OAuthAccessTokenRefreshInput): Promise<OAuthTokenResult>;
+}
+
+/** Loads provider-local OAuth operations from the lazy provider runtime module. */
+export interface IProviderOAuthRuntimeLoader {
+  loadProviderOAuthRuntime(service: string): Promise<ProviderOAuthRuntime | undefined>;
+}
+
+export interface ExchangeOAuthCodeOptions {
+  service: string;
+  auth: OAuth2AuthDefinition;
+  clientConfig: OAuthClientConfig;
+  code: string;
+  state?: string;
+  redirectUri: string;
+  tokenUrl: string;
+  extraFields?: Record<string, string>;
+  providerFetcher: typeof fetch;
+  signal?: AbortSignal;
+  oauthRuntimeLoader: IProviderOAuthRuntimeLoader;
+  createError(message: string): Error;
+}
+
+export interface RefreshOAuthAccessTokenOptions {
+  service: string;
+  auth: OAuth2AuthDefinition;
+  clientConfig: OAuthClientConfig;
+  refreshToken: string;
+  tokenUrl: string;
+  extraFields?: Record<string, string>;
+  providerFetcher: typeof fetch;
+  signal?: AbortSignal;
+  oauthRuntimeLoader: IProviderOAuthRuntimeLoader;
+  createError(message: string): Error;
+}
 
 export interface OAuthTokenRequestOptions {
   clientId: string;
@@ -42,25 +109,79 @@ interface TokenRequest extends OAuthTokenRequestOptions {
 
 export type OAuthTokenErrorFactory = (message: string) => Error;
 
-export async function requestAuthorizationCodeToken(
-  input: AuthorizationCodeTokenRequest,
-): Promise<Extract<ResolvedCredential, { authType: "oauth2" }>> {
+/** Exchange an OAuth code through a provider override or the standard token endpoint protocol. */
+export async function exchangeOAuthCode(input: ExchangeOAuthCodeOptions): Promise<OAuthTokenResult> {
+  const oauth = await input.oauthRuntimeLoader.loadProviderOAuthRuntime(input.service);
+  if (oauth?.exchangeCode) {
+    return oauth.exchangeCode({
+      code: input.code,
+      clientConfig: input.clientConfig,
+      redirectUri: input.redirectUri,
+      tokenUrl: input.tokenUrl,
+      fetcher: input.providerFetcher,
+      signal: input.signal,
+      createError: input.createError,
+    });
+  }
+
+  return requestAuthorizationCodeToken({
+    code: input.code,
+    state: input.state,
+    clientId: input.clientConfig.clientId,
+    clientSecret: input.clientConfig.clientSecret,
+    redirectUri: input.redirectUri,
+    responseEnvelope: input.auth.tokenResponseEnvelope,
+    tokenRequestFields: input.auth.tokenRequestFields,
+    tokenEndpointAuthMethod: input.auth.tokenEndpointAuthMethod,
+    tokenRequestFormat: input.auth.tokenRequestFormat,
+    tokenUrl: input.tokenUrl,
+    extraFields: input.extraFields,
+    createError: input.createError,
+  });
+}
+
+/** Refresh an access token through a provider override or the standard refresh-token protocol. */
+export async function refreshOAuthAccessToken(input: RefreshOAuthAccessTokenOptions): Promise<OAuthTokenResult> {
+  const oauth = await input.oauthRuntimeLoader.loadProviderOAuthRuntime(input.service);
+  if (oauth?.refreshAccessToken) {
+    return oauth.refreshAccessToken({
+      refreshToken: input.refreshToken,
+      clientConfig: input.clientConfig,
+      fetcher: input.providerFetcher,
+      signal: input.signal,
+      createError: input.createError,
+    });
+  }
+
+  return requestRefreshToken({
+    clientId: input.clientConfig.clientId,
+    clientSecret: input.clientConfig.clientSecret,
+    responseEnvelope: input.auth.tokenResponseEnvelope,
+    refreshToken: input.refreshToken,
+    extraFields: input.extraFields,
+    tokenRequestFields: input.auth.tokenRequestFields,
+    tokenEndpointAuthMethod: input.auth.tokenEndpointAuthMethod,
+    tokenRequestFormat: input.auth.tokenRequestFormat,
+    tokenUrl: input.tokenUrl,
+    createError: input.createError,
+  });
+}
+
+export async function requestAuthorizationCodeToken(input: AuthorizationCodeTokenRequest): Promise<OAuthTokenResult> {
   return requestToken({
     ...input,
     fields: createAuthorizationCodeFields(input),
   });
 }
 
-export async function requestRefreshToken(
-  input: RefreshTokenRequest,
-): Promise<Extract<ResolvedCredential, { authType: "oauth2" }>> {
+export async function requestRefreshToken(input: RefreshTokenRequest): Promise<OAuthTokenResult> {
   return requestToken({
     ...input,
     fields: createRefreshTokenFields(input),
   });
 }
 
-async function requestToken(input: TokenRequest): Promise<Extract<ResolvedCredential, { authType: "oauth2" }>> {
+async function requestToken(input: TokenRequest): Promise<OAuthTokenResult> {
   const fields: Record<string, string> = { ...input.fields };
   const clientIdField = input.tokenRequestFields?.clientId;
   if (clientIdField !== false) {
@@ -129,16 +250,10 @@ async function requestToken(input: TokenRequest): Promise<Extract<ResolvedCreden
   const accessToken = requiredString(payload.access_token ?? payload.token, "access_token", input.createError);
   const tokenType = optionalString(payload.token_type) ?? "Bearer";
   return {
-    authType: "oauth2",
     accessToken,
     tokenType,
     refreshToken: optionalString(payload.refresh_token),
     expiresAt: expiresAtFromLifetime(payload.expires_in),
-    profile: {
-      accountId: "oauth2",
-      displayName: "OAuth Credential",
-      grantedScopes: [],
-    },
     metadata: createTokenMetadata(payload),
   };
 }

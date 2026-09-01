@@ -3,6 +3,8 @@ import type { CredentialValidators, ProviderExecutors } from "../../core/types.t
 import { defineOAuthProviderExecutors } from "../provider-runtime.ts";
 import { instagramActionHandlers, validateInstagramCredential } from "./runtime.ts";
 
+export { oauth } from "./oauth.ts";
+
 const service = "instagram";
 
 export const executors: ProviderExecutors = defineOAuthProviderExecutors(service, instagramActionHandlers, {

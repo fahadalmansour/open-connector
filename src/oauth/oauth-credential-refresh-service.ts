@@ -1,12 +1,12 @@
 import type { ResolvedCredential } from "../core/types.ts";
 import type { OAuthClientConfigService } from "./oauth-client-config-service.ts";
-import type { OAuthTokenAdapterLoader, OAuthTokenResult } from "./oauth-token-adapter.ts";
+import type { IProviderOAuthRuntimeLoader } from "./oauth-token.ts";
 
 import { ConnectionError } from "../connection-service.ts";
 import { optionalRecord, stringRecord } from "../core/cast.ts";
 import { providerFetch } from "../providers/provider-runtime.ts";
 import { readOAuthClientConfigMetadata } from "./oauth-client-config-service.ts";
-import { expiresAtFromLifetime, requestRefreshToken } from "./oauth-token.ts";
+import { expiresAtFromLifetime, refreshOAuthAccessToken } from "./oauth-token.ts";
 
 type OAuthCredential = Extract<ResolvedCredential, { authType: "oauth2" }>;
 
@@ -19,11 +19,11 @@ export interface IOAuthCredentialRefresher {
  */
 export class OAuthCredentialRefreshService implements IOAuthCredentialRefresher {
   private readonly clientConfigs: OAuthClientConfigService;
-  private readonly providerLoader?: OAuthTokenAdapterLoader;
+  private readonly oauthRuntimeLoader: IProviderOAuthRuntimeLoader;
 
-  constructor(clientConfigs: OAuthClientConfigService, providerLoader?: OAuthTokenAdapterLoader) {
+  constructor(clientConfigs: OAuthClientConfigService, oauthRuntimeLoader: IProviderOAuthRuntimeLoader) {
     this.clientConfigs = clientConfigs;
-    this.providerLoader = providerLoader;
+    this.oauthRuntimeLoader = oauthRuntimeLoader;
   }
 
   async refresh(service: string, credential: OAuthCredential): Promise<OAuthCredential> {
@@ -37,28 +37,17 @@ export class OAuthCredentialRefreshService implements IOAuthCredentialRefresher 
       );
     }
 
-    const adapter = await this.providerLoader?.loadOAuthTokenAdapter?.(service);
-    const requestTokenRefresh = (value: string): Promise<OAuthTokenResult> =>
-      adapter?.refreshAccessToken
-        ? adapter.refreshAccessToken({
-            refreshToken: value,
-            clientConfig: config,
-            fetcher: providerFetch,
-            createError: (message) => new ConnectionError("oauth_token_refresh_failed", message),
-          })
-        : requestRefreshToken({
-            clientId: config.clientId,
-            clientSecret: config.clientSecret,
-            responseEnvelope: auth.tokenResponseEnvelope,
-            refreshToken: value,
-            extraFields: readOAuthRefreshParameters(credential.providerSecret),
-            tokenRequestFields: auth.tokenRequestFields,
-            tokenEndpointAuthMethod: auth.tokenEndpointAuthMethod,
-            tokenRequestFormat: auth.tokenRequestFormat,
-            tokenUrl: this.clientConfigs.resolveEndpointUrl(service, auth.refreshTokenUrl ?? auth.tokenUrl, config),
-            createError: (message) => new ConnectionError("oauth_token_refresh_failed", message),
-          });
-    const refreshed = await requestTokenRefresh(credential.refreshToken ?? "");
+    const refreshed = await refreshOAuthAccessToken({
+      service,
+      auth,
+      clientConfig: config,
+      refreshToken: credential.refreshToken ?? "",
+      tokenUrl: this.clientConfigs.resolveEndpointUrl(service, auth.refreshTokenUrl ?? auth.tokenUrl, config),
+      extraFields: readOAuthRefreshParameters(credential.providerSecret),
+      providerFetcher: providerFetch,
+      oauthRuntimeLoader: this.oauthRuntimeLoader,
+      createError: (message) => new ConnectionError("oauth_token_refresh_failed", message),
+    });
     const expiresIn =
       refreshed.expiresAt === undefined ? credential.metadata.expires_in : refreshed.metadata.expires_in;
 

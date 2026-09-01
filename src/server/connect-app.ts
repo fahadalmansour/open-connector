@@ -1,7 +1,7 @@
 import type { CatalogStore } from "../catalog-store.ts";
 import type { ActionPolicyService } from "../core/action-policy.ts";
 import type { TransitFileUpload } from "../core/types.ts";
-import type { IProviderLoader } from "../providers/provider-loader.ts";
+import type { IRuntimeProviderLoader } from "../providers/provider-loader.ts";
 import type { RuntimeJwtVerifier } from "./api/runtime-jwt.ts";
 import type { ITransitFileService } from "./files/transit-file-store.ts";
 import type { Logger } from "./logger.ts";
@@ -20,7 +20,7 @@ import { RuntimeTokenService } from "./storage/runtime-token-service.ts";
 
 export interface ConnectAppOptions {
   catalog: CatalogStore;
-  providerLoader: IProviderLoader;
+  providerLoader: IRuntimeProviderLoader;
   runtimeDatabase: RuntimeDatabase;
   transitFiles: ITransitFileService;
   uploadTransitFile?: (request: Request) => Promise<TransitFileUpload>;
@@ -87,7 +87,7 @@ export async function createConnectApp(options: ConnectAppOptions): Promise<Conn
       oauthFlow: new OAuthFlowService({
         clientConfigs: oauthClientConfigs,
         connections,
-        providerLoader: options.providerLoader,
+        oauthRuntimeLoader: options.providerLoader,
         states: options.runtimeDatabase.oauthStateStore,
         secretCodec: options.secretCodec,
         isCustomClientConfigAllowed,

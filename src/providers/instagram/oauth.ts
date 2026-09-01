@@ -1,9 +1,9 @@
 import type {
   OAuthAccessTokenRefreshInput,
   OAuthCodeExchangeInput,
-  OAuthTokenAdapter,
   OAuthTokenResult,
-} from "../../oauth/oauth-token-adapter.ts";
+  ProviderOAuthRuntime,
+} from "../../oauth/oauth-token.ts";
 
 import { optionalRecord, optionalString, requiredString } from "../../core/cast.ts";
 import { readBoundedResponseBytes } from "../../core/request.ts";
@@ -44,7 +44,7 @@ interface InstagramTokenResultOptions {
 }
 
 /** Instagram Login token protocol, kept provider-local because it is not standard OAuth refresh-token behavior. */
-export const oauthTokenAdapter: OAuthTokenAdapter = {
+export const oauth: ProviderOAuthRuntime = {
   async exchangeCode(input: OAuthCodeExchangeInput): Promise<OAuthTokenResult> {
     const body = new FormData();
     body.set("client_id", input.clientConfig.clientId);

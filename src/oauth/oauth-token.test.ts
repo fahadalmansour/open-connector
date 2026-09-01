@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { providerUserAgent } from "../providers/provider-runtime.ts";
-import { requestAuthorizationCodeToken, requestRefreshToken } from "./oauth-token.ts";
+import { exchangeOAuthCode, requestAuthorizationCodeToken, requestRefreshToken } from "./oauth-token.ts";
 
 const authorizationCodeRequest = {
   clientId: "client-id",
@@ -39,6 +39,53 @@ describe("OAuth token requests", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
+  });
+
+  it("delegates non-standard code exchange to a lazy provider OAuth runtime", async () => {
+    const fetcher = vi.fn();
+    const loadProviderOAuthRuntime = vi.fn(async () => ({
+      async exchangeCode() {
+        return {
+          accessToken: "provider-access-token",
+          refreshToken: "provider-access-token",
+          tokenType: "Bearer",
+          expiresAt: "2026-10-30T00:00:00.000Z",
+          metadata: { permissions: "read,write" },
+        };
+      },
+    }));
+
+    const token = await exchangeOAuthCode({
+      service: "instagram",
+      auth: {
+        type: "oauth2",
+        authorizationUrl: "https://www.instagram.com/oauth/authorize",
+        tokenUrl: "https://api.instagram.com/oauth/access_token",
+        scopes: ["instagram_business_basic"],
+        tokenEndpointAuthMethod: "client_secret_post",
+      },
+      clientConfig: {
+        service: "instagram",
+        clientId: "client-id",
+        clientSecret: "client-secret",
+        extra: {},
+        secretExtra: {},
+      },
+      code: "authorization-code",
+      redirectUri: "https://runtime.example.com/oauth/callback",
+      tokenUrl: "https://api.instagram.com/oauth/access_token",
+      providerFetcher: fetcher,
+      oauthRuntimeLoader: { loadProviderOAuthRuntime },
+      createError: (message) => new Error(message),
+    });
+
+    expect(loadProviderOAuthRuntime).toHaveBeenCalledWith("instagram");
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(token).toMatchObject({
+      accessToken: "provider-access-token",
+      refreshToken: "provider-access-token",
+      metadata: { permissions: "read,write" },
+    });
   });
 
   it("exchanges an authorization code as a form POST that never follows redirects", async () => {

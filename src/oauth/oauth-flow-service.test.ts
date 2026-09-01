@@ -4,7 +4,7 @@ import type { IProviderLoader } from "../providers/provider-loader.ts";
 import type { ISecretCodec } from "../server/secrets/secret-codec-core.ts";
 import type { IOAuthClientConfigStore, OAuthClientConfig } from "./oauth-client-config-service.ts";
 import type { IOAuthStateStore, OAuthAuthorizationState } from "./oauth-flow-service.ts";
-import type { OAuthTokenAdapter } from "./oauth-token-adapter.ts";
+import type { IProviderOAuthRuntimeLoader, ProviderOAuthRuntime } from "./oauth-token.ts";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createCatalogStore } from "../catalog-store.ts";
@@ -762,19 +762,20 @@ describe("OAuthFlowService", () => {
     expect(vi.mocked(fetch).mock.calls[0]?.[0]).toBe("https://tenant.example.com/oauth/tenant%2Fa/token");
   });
 
-  it("stores the token returned by a provider OAuth adapter", async () => {
-    const providerLoader = new EmptyProviderLoader({
-      async exchangeCode() {
-        return {
-          accessToken: "provider-access-token",
-          refreshToken: "provider-access-token",
-          tokenType: "Bearer",
-          expiresAt: "2026-10-30T00:00:00.000Z",
-          metadata: { permissions: "read,write" },
-        };
+  it("stores the token returned by a provider OAuth runtime", async () => {
+    const services = createServices([oauthProvider], {
+      oauthRuntime: {
+        async exchangeCode() {
+          return {
+            accessToken: "provider-access-token",
+            refreshToken: "provider-access-token",
+            tokenType: "Bearer",
+            expiresAt: "2026-10-30T00:00:00.000Z",
+            metadata: { permissions: "read,write" },
+          };
+        },
       },
     });
-    const services = createServices([oauthProvider], { providerLoader });
     await services.clientConfigs.upsertConfig({
       service: "example",
       clientId: "client-id",
@@ -820,7 +821,7 @@ interface CreateServicesOptions {
   stateMaxAgeMs?: number;
   allowedCustomOAuth?: string[];
   secretCodec?: ISecretCodec;
-  providerLoader?: IProviderLoader;
+  oauthRuntime?: ProviderOAuthRuntime;
 }
 
 function createServices(
@@ -833,7 +834,7 @@ function createServices(
   states: MemoryOAuthStateStore;
 } {
   const catalog = createCatalogStore(providers);
-  const providerLoader = options.providerLoader ?? new EmptyProviderLoader();
+  const providerLoader = new EmptyProviderLoader(options.oauthRuntime);
   const connections = new ConnectionService({
     catalog,
     providerLoader,
@@ -852,7 +853,7 @@ function createServices(
     flow: new OAuthFlowService({
       clientConfigs,
       connections,
-      providerLoader,
+      oauthRuntimeLoader: providerLoader,
       states,
       stateMaxAgeMs: options.stateMaxAgeMs,
       secretCodec: options.secretCodec,
@@ -863,11 +864,11 @@ function createServices(
   };
 }
 
-class EmptyProviderLoader implements IProviderLoader {
-  private readonly oauthTokenAdapter?: OAuthTokenAdapter;
+class EmptyProviderLoader implements IProviderLoader, IProviderOAuthRuntimeLoader {
+  private readonly oauthRuntime?: ProviderOAuthRuntime;
 
-  constructor(oauthTokenAdapter?: OAuthTokenAdapter) {
-    this.oauthTokenAdapter = oauthTokenAdapter;
+  constructor(oauthRuntime?: ProviderOAuthRuntime) {
+    this.oauthRuntime = oauthRuntime;
   }
 
   async loadActionExecutor(_service: string, _actionId: string): Promise<ActionExecutor | undefined> {
@@ -882,8 +883,8 @@ class EmptyProviderLoader implements IProviderLoader {
     return undefined;
   }
 
-  async loadOAuthTokenAdapter(_service: string): Promise<OAuthTokenAdapter | undefined> {
-    return this.oauthTokenAdapter;
+  async loadProviderOAuthRuntime(_service: string): Promise<ProviderOAuthRuntime | undefined> {
+    return this.oauthRuntime;
   }
 }
 

@@ -1,12 +1,12 @@
 import type { ActionExecutor, CredentialValidators, ProviderExecutors, ProviderProxyExecutor } from "../core/types.ts";
-import type { OAuthTokenAdapter } from "../oauth/oauth-token-adapter.ts";
+import type { IProviderOAuthRuntimeLoader, ProviderOAuthRuntime } from "../oauth/oauth-token.ts";
 
 import { withProviderFallbackMessage } from "./provider-runtime.ts";
 
 export interface ExecutorModule {
   credentialValidators?: CredentialValidators;
   executors: ProviderExecutors;
-  oauthTokenAdapter?: OAuthTokenAdapter;
+  oauth?: ProviderOAuthRuntime;
   proxy?: ProviderProxyExecutor;
 }
 
@@ -15,7 +15,8 @@ export interface ExecutorModules {
 }
 
 /**
- * Loads provider executor modules only when an action is executed.
+ * Loads provider runtime modules only when an action, proxy, credential validator,
+ * or provider-specific OAuth token operation runs.
  *
  * Provider definitions are intentionally not exposed here. Runtime catalog
  * reads should use generated `catalog/apps/*.json` instead of importing
@@ -40,15 +41,14 @@ export interface IProviderLoader {
    * Load a provider credential validator only when a connection is created.
    */
   loadCredentialValidators(service: string): Promise<CredentialValidators | undefined>;
-
-  /** Load provider-local OAuth token protocol hooks only when an OAuth token operation runs. */
-  loadOAuthTokenAdapter?(service: string): Promise<OAuthTokenAdapter | undefined>;
 }
+
+export interface IRuntimeProviderLoader extends IProviderLoader, IProviderOAuthRuntimeLoader {}
 
 /**
  * Provider loader backed by the executor registry selected by the runtime entry point.
  */
-export class ProviderLoader implements IProviderLoader {
+export class ProviderLoader implements IRuntimeProviderLoader {
   private readonly executorModules: ExecutorModules;
 
   constructor(executorModules: ExecutorModules) {
@@ -90,14 +90,13 @@ export class ProviderLoader implements IProviderLoader {
     return module.credentialValidators;
   }
 
-  async loadOAuthTokenAdapter(service: string): Promise<OAuthTokenAdapter | undefined> {
-    const loadExecutors = this.executorModules[service];
-    if (!loadExecutors) {
+  async loadProviderOAuthRuntime(service: string): Promise<ProviderOAuthRuntime | undefined> {
+    const loadRuntime = this.executorModules[service];
+    if (!loadRuntime) {
       return undefined;
     }
 
-    const module = await loadExecutors();
-    return module.oauthTokenAdapter;
+    return (await loadRuntime()).oauth;
   }
 
   private _findActionExecutor(

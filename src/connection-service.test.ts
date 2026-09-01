@@ -2,6 +2,7 @@ import type { IConnectionStore, StoredConnection } from "./connection-service.ts
 import type { ActionExecutor, CredentialValidators, ProviderDefinition, ResolvedCredential } from "./core/types.ts";
 import type { MarketplaceService } from "./marketplace/marketplace-service.ts";
 import type { OAuthClientConfig } from "./oauth/oauth-client-config-service.ts";
+import type { IProviderOAuthRuntimeLoader } from "./oauth/oauth-token.ts";
 import type { IProviderLoader } from "./providers/provider-loader.ts";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -9,6 +10,12 @@ import { createCatalogStore } from "./catalog-store.ts";
 import { ConnectionService } from "./connection-service.ts";
 import { OAuthClientConfigService } from "./oauth/oauth-client-config-service.ts";
 import { OAuthCredentialRefreshService } from "./oauth/oauth-credential-refresh-service.ts";
+
+const noOAuthRuntime: IProviderOAuthRuntimeLoader = {
+  async loadProviderOAuthRuntime() {
+    return undefined;
+  },
+};
 
 const hackernewsProvider: ProviderDefinition = {
   service: "hackernews",
@@ -667,7 +674,7 @@ describe("ConnectionService", () => {
     const store = new MemoryConnectionStore();
     const oauthClientConfigs = createOAuthClientConfigs([oauthProvider]);
     const service = createService([oauthProvider], {
-      oauthCredentials: new OAuthCredentialRefreshService(oauthClientConfigs),
+      oauthCredentials: new OAuthCredentialRefreshService(oauthClientConfigs, noOAuthRuntime),
       store,
     });
     await oauthClientConfigs.upsertConfig({
@@ -724,7 +731,7 @@ describe("ConnectionService", () => {
     const store = new MemoryConnectionStore();
     const oauthClientConfigs = createOAuthClientConfigs([oauthProvider]);
     const service = createService([oauthProvider], {
-      oauthCredentials: new OAuthCredentialRefreshService(oauthClientConfigs),
+      oauthCredentials: new OAuthCredentialRefreshService(oauthClientConfigs, noOAuthRuntime),
       store,
     });
     await oauthClientConfigs.upsertConfig({
@@ -764,7 +771,7 @@ describe("ConnectionService", () => {
     const store = new MemoryConnectionStore();
     const oauthClientConfigs = createOAuthClientConfigs([oauthProvider]);
     const service = createService([oauthProvider], {
-      oauthCredentials: new OAuthCredentialRefreshService(oauthClientConfigs),
+      oauthCredentials: new OAuthCredentialRefreshService(oauthClientConfigs, noOAuthRuntime),
       store,
     });
     await oauthClientConfigs.upsertConfig({
@@ -829,7 +836,7 @@ describe("ConnectionService", () => {
     const store = new MemoryConnectionStore();
     const oauthClientConfigs = createOAuthClientConfigs([oauthProvider]);
     const service = createService([oauthProvider], {
-      oauthCredentials: new OAuthCredentialRefreshService(oauthClientConfigs),
+      oauthCredentials: new OAuthCredentialRefreshService(oauthClientConfigs, noOAuthRuntime),
       store,
     });
     await oauthClientConfigs.upsertConfig({
@@ -918,7 +925,7 @@ describe("ConnectionService", () => {
     const store = new MemoryConnectionStore();
     const oauthClientConfigs = createOAuthClientConfigs([oauthRefreshProvider]);
     const service = createService([oauthRefreshProvider], {
-      oauthCredentials: new OAuthCredentialRefreshService(oauthClientConfigs),
+      oauthCredentials: new OAuthCredentialRefreshService(oauthClientConfigs, noOAuthRuntime),
       store,
     });
     await oauthClientConfigs.upsertConfig({

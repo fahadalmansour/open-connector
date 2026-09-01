@@ -5,11 +5,11 @@ import type {
   OAuthClientConfigInput,
   OAuthClientConfigService,
 } from "./oauth-client-config-service.ts";
-import type { OAuthTokenAdapterLoader } from "./oauth-token-adapter.ts";
+import type { IProviderOAuthRuntimeLoader } from "./oauth-token.ts";
 
 import { createHash, randomBytes } from "node:crypto";
 import { providerFetch } from "../providers/provider-runtime.ts";
-import { requestAuthorizationCodeToken } from "./oauth-token.ts";
+import { exchangeOAuthCode } from "./oauth-token.ts";
 
 /**
  * Started OAuth authorization flow returned to the local console.
@@ -47,7 +47,7 @@ export interface OAuthAuthorizationState {
 export interface OAuthFlowServiceOptions {
   clientConfigs: OAuthClientConfigService;
   connections: ConnectionService;
-  providerLoader?: OAuthTokenAdapterLoader;
+  oauthRuntimeLoader: IProviderOAuthRuntimeLoader;
   states: IOAuthStateStore;
   stateMaxAgeMs?: number;
   secretCodec?: ISecretCodec;
@@ -70,7 +70,7 @@ export interface IOAuthStateStore {
 export class OAuthFlowService {
   private readonly clientConfigs: OAuthClientConfigService;
   private readonly connections: ConnectionService;
-  private readonly providerLoader?: OAuthTokenAdapterLoader;
+  private readonly oauthRuntimeLoader: IProviderOAuthRuntimeLoader;
   private readonly states: IOAuthStateStore;
   private readonly stateMaxAgeMs: number;
   private readonly secretCodec?: ISecretCodec;
@@ -79,7 +79,7 @@ export class OAuthFlowService {
   constructor(input: OAuthFlowServiceOptions) {
     this.clientConfigs = input.clientConfigs;
     this.connections = input.connections;
-    this.providerLoader = input.providerLoader;
+    this.oauthRuntimeLoader = input.oauthRuntimeLoader;
     this.states = input.states;
     this.stateMaxAgeMs = input.stateMaxAgeMs ?? 15 * 60 * 1000;
     this.secretCodec = input.secretCodec;
@@ -161,42 +161,29 @@ export class OAuthFlowService {
 
     const redirectUri = this.clientConfigs.expectedRedirectUri(pending.service);
     const tokenUrl = this.clientConfigs.resolveEndpointUrl(pending.service, auth.tokenUrl, config);
-    const adapter = await this.providerLoader?.loadOAuthTokenAdapter?.(pending.service);
-    const tokenResponse = adapter?.exchangeCode
-      ? {
-          authType: "oauth2" as const,
-          ...(await adapter.exchangeCode({
-            code: input.code,
-            clientConfig: config,
-            redirectUri,
-            tokenUrl,
-            fetcher: providerFetch,
-            signal: input.signal,
-            createError: (message) => new OAuthFlowError("oauth_token_exchange_failed", message),
-          })),
-          profile: {
-            accountId: "oauth2",
-            displayName: "OAuth Credential",
-            grantedScopes: [],
-          },
-        }
-      : await requestAuthorizationCodeToken({
-          code: input.code,
-          state: pending.state,
-          clientId: config.clientId,
-          clientSecret: config.clientSecret,
-          redirectUri,
-          responseEnvelope: auth.tokenResponseEnvelope,
-          tokenRequestFields: auth.tokenRequestFields,
-          tokenEndpointAuthMethod: auth.tokenEndpointAuthMethod,
-          tokenRequestFormat: auth.tokenRequestFormat,
-          tokenUrl,
-          extraFields: createTokenExtraFields(pending, auth.tokenRequestCallbackParameters, input.callbackParameters),
-          createError: (message) => new OAuthFlowError("oauth_token_exchange_failed", message),
-        });
+    const tokenResponse = await exchangeOAuthCode({
+      service: pending.service,
+      auth,
+      clientConfig: config,
+      code: input.code,
+      state: pending.state,
+      redirectUri,
+      tokenUrl,
+      extraFields: createTokenExtraFields(pending, auth.tokenRequestCallbackParameters, input.callbackParameters),
+      providerFetcher: providerFetch,
+      signal: input.signal,
+      oauthRuntimeLoader: this.oauthRuntimeLoader,
+      createError: (message) => new OAuthFlowError("oauth_token_exchange_failed", message),
+    });
     const refreshParameters = readCallbackParameters(auth.tokenRequestCallbackParameters, input.callbackParameters);
     const oauthCredential = {
+      authType: "oauth2" as const,
       ...tokenResponse,
+      profile: {
+        accountId: "oauth2",
+        displayName: "OAuth Credential",
+        grantedScopes: [],
+      },
       providerSecret:
         Object.keys(refreshParameters).length > 0 ? { oauthRefreshParameters: refreshParameters } : undefined,
       metadata: {
